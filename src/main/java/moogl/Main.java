@@ -3,6 +3,7 @@ package moogl;
 import java.awt.AWTException;
 import java.awt.SystemTray;
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
@@ -10,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -29,6 +31,8 @@ public final class Main {
 
   private final KeepAwakeService service;
   private final ThemeService themeService;
+  private final BuildInfo build = BuildInfo.load();
+  private final UpdateService updates;
   private Config config;
   private MainWindow window;
   private TrayController tray;
@@ -37,6 +41,7 @@ public final class Main {
     this.config = config;
     this.service = new KeepAwakeService(createPowerControl(), Clock.systemDefaultZone(), config);
     this.themeService = new ThemeService(createThemeControl(), Clock.systemDefaultZone(), config);
+    this.updates = createUpdateService(config);
   }
 
   public static void main(String[] args) throws IOException {
@@ -65,14 +70,25 @@ public final class Main {
     }
 
     boolean trayAvailable = SystemTray.isSupported();
-    window = new MainWindow(this::changeMode, this::applyConfig, trayAvailable, this::exit);
+    window =
+        new MainWindow(
+            this::changeMode,
+            this::applyConfig,
+            updates::checkNow,
+            build.version(),
+            trayAvailable,
+            this::exit);
     window.showConfig(config);
 
     if (trayAvailable) {
       try {
         tray =
             new TrayController(
-                window::showWindow, this::changeMode, this::changeThemeMode, this::exit);
+                window::showWindow,
+                this::changeMode,
+                this::changeThemeMode,
+                updates::checkNow,
+                this::exit);
         tray.showMode(config.mode());
         tray.showThemeMode(config.theme().mode());
       } catch (AWTException e) {
@@ -98,9 +114,19 @@ public final class Main {
                     tray.showThemeStatus(description);
                   }
                 }));
+    updates.addListener(
+        update ->
+            SwingUtilities.invokeLater(
+                () -> {
+                  window.showUpdateStatus(update.message());
+                  if (update.important() && tray != null) {
+                    tray.showMessage(update.message());
+                  }
+                }));
     Runtime.getRuntime().addShutdownHook(new Thread(service::shutdown, "release-power"));
     service.start();
     themeService.start();
+    updates.start();
 
     if (forceShow || !config.startMinimized() || tray == null) {
       window.showWindow();
@@ -125,6 +151,7 @@ public final class Main {
     }
     service.update(newConfig);
     themeService.update(newConfig);
+    updates.setAutoUpdate(newConfig.autoUpdate());
     try {
       newConfig.save(CONFIG_FILE);
     } catch (IOException e) {
@@ -140,11 +167,45 @@ public final class Main {
   private void exit() {
     service.shutdown();
     themeService.shutdown();
+    updates.shutdown();
     if (tray != null) {
       tray.remove();
     }
     window.dispose();
     System.exit(0);
+  }
+
+  private UpdateService createUpdateService(Config config) {
+    boolean windows = isWindows();
+    UpdateService.Installer installer =
+        windows
+            ? new WindowsInstaller()
+            : (update, target) -> {
+                throw new IOException("automatic install is only supported on Windows");
+              };
+    return new UpdateService(
+        UpdateService.releasesOf(build.repo()),
+        build.version(),
+        windows ? runningFile() : Optional.empty(),
+        APP_DIR.resolve("update"),
+        installer,
+        () -> SwingUtilities.invokeLater(this::exit),
+        Clock.systemUTC(),
+        config.autoUpdate());
+  }
+
+  private static Optional<Path> runningFile() {
+    try {
+      Path file = Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+      return Files.isRegularFile(file) ? Optional.of(file) : Optional.empty();
+    } catch (URISyntaxException | RuntimeException e) {
+      LOG.log(Level.WARNING, "Could not locate the running application file", e);
+      return Optional.empty();
+    }
+  }
+
+  private static boolean isWindows() {
+    return System.getProperty("os.name", "").startsWith("Windows");
   }
 
   private static PowerControl createPowerControl() {
