@@ -36,7 +36,7 @@ class ConfigTest {
   void roundTripsThroughFile() throws IOException {
     Map<DayOfWeek, DaySchedule> days = new EnumMap<>(Config.defaults().days());
     days.put(DayOfWeek.SATURDAY, new DaySchedule(true, LocalTime.of(10, 0), LocalTime.of(14, 15)));
-    Config config = new Config(days, Mode.ALWAYS_ON, true, false);
+    Config config = new Config(days, Mode.ALWAYS_ON, true, false, ThemeSchedule.defaults());
     Path file = dir.resolve("nested/config.properties");
 
     config.save(file);
@@ -64,5 +64,58 @@ class ConfigTest {
     assertEquals(defaults.day(DayOfWeek.MONDAY), config.day(DayOfWeek.MONDAY));
     assertEquals(defaults.day(DayOfWeek.TUESDAY), config.day(DayOfWeek.TUESDAY));
     assertEquals(LocalTime.of(17, 45), config.day(DayOfWeek.WEDNESDAY).end());
+  }
+
+  @Test
+  void themeRoundTripsThroughFile() throws IOException {
+    ThemeSchedule theme =
+        new ThemeSchedule(
+            ThemeMode.SUN,
+            LocalTime.of(6, 45),
+            LocalTime.of(20, 15),
+            50.45,
+            30.52,
+            -15,
+            30,
+            true,
+            false);
+    Config defaults = Config.defaults();
+    Config config = new Config(defaults.days(), Mode.OFF, true, false, theme);
+    Path file = dir.resolve("config.properties");
+
+    config.save(file);
+
+    assertEquals(theme, Config.load(file).theme());
+  }
+
+  @Test
+  void invalidThemeFallsBackToDefaults() throws IOException {
+    Path file = dir.resolve("config.properties");
+    Files.writeString(
+        file,
+        """
+        theme.mode=SUN
+        theme.latitude=123.4
+        """);
+
+    assertEquals(ThemeSchedule.defaults(), Config.load(file).theme());
+  }
+
+  @Test
+  void unparsableThemeValuesUseDefaultsPerField() throws IOException {
+    Path file = dir.resolve("config.properties");
+    Files.writeString(
+        file,
+        """
+        theme.mode=SOMETIMES
+        theme.longitude=east
+        theme.sunsetOffset=30
+        """);
+
+    ThemeSchedule theme = Config.load(file).theme();
+
+    assertEquals(ThemeMode.OFF, theme.mode());
+    assertEquals(0.0, theme.longitude());
+    assertEquals(30, theme.sunsetOffset());
   }
 }

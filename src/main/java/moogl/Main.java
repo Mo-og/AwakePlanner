@@ -28,6 +28,7 @@ public final class Main {
   private static FileLock instanceLock;
 
   private final KeepAwakeService service;
+  private final ThemeService themeService;
   private Config config;
   private MainWindow window;
   private TrayController tray;
@@ -35,6 +36,7 @@ public final class Main {
   private Main(Config config) {
     this.config = config;
     this.service = new KeepAwakeService(createPowerControl(), Clock.systemDefaultZone(), config);
+    this.themeService = new ThemeService(createThemeControl(), Clock.systemDefaultZone(), config);
   }
 
   public static void main(String[] args) throws IOException {
@@ -68,8 +70,11 @@ public final class Main {
 
     if (trayAvailable) {
       try {
-        tray = new TrayController(window::showWindow, this::changeMode, this::exit);
+        tray =
+            new TrayController(
+                window::showWindow, this::changeMode, this::changeThemeMode, this::exit);
         tray.showMode(config.mode());
+        tray.showThemeMode(config.theme().mode());
       } catch (AWTException e) {
         LOG.log(Level.WARNING, "Could not add tray icon", e);
       }
@@ -84,8 +89,18 @@ public final class Main {
                     tray.showStatus(status);
                   }
                 }));
+    themeService.addListener(
+        description ->
+            SwingUtilities.invokeLater(
+                () -> {
+                  window.showThemeStatus(description);
+                  if (tray != null) {
+                    tray.showThemeStatus(description);
+                  }
+                }));
     Runtime.getRuntime().addShutdownHook(new Thread(service::shutdown, "release-power"));
     service.start();
+    themeService.start();
 
     if (forceShow || !config.startMinimized() || tray == null) {
       window.showWindow();
@@ -96,13 +111,20 @@ public final class Main {
     applyConfig(config.withMode(mode));
   }
 
+  private void changeThemeMode(ThemeMode mode) {
+    applyConfig(config.withThemeMode(mode));
+  }
+
   private void applyConfig(Config newConfig) {
     config = newConfig;
     window.showMode(newConfig.mode());
+    window.showThemeMode(newConfig.theme().mode());
     if (tray != null) {
       tray.showMode(newConfig.mode());
+      tray.showThemeMode(newConfig.theme().mode());
     }
     service.update(newConfig);
+    themeService.update(newConfig);
     try {
       newConfig.save(CONFIG_FILE);
     } catch (IOException e) {
@@ -117,6 +139,7 @@ public final class Main {
 
   private void exit() {
     service.shutdown();
+    themeService.shutdown();
     if (tray != null) {
       tray.remove();
     }
@@ -130,6 +153,15 @@ public final class Main {
     } catch (RuntimeException e) {
       LOG.log(Level.SEVERE, "Native power control unavailable, running without it", e);
       return new NoopPowerControl();
+    }
+  }
+
+  private static ThemeControl createThemeControl() {
+    try {
+      return ThemeControl.forCurrentOs();
+    } catch (RuntimeException e) {
+      LOG.log(Level.SEVERE, "Native theme control unavailable, running without it", e);
+      return new NoopThemeControl();
     }
   }
 
