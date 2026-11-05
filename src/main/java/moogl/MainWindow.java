@@ -9,7 +9,6 @@ import java.awt.Insets;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.time.DayOfWeek;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -19,8 +18,6 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -36,13 +33,11 @@ import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerDateModel;
 import javax.swing.SpinnerNumberModel;
-import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 
 public final class MainWindow extends JFrame {
 
   private static final LocalDate EPOCH = LocalDate.of(1970, 1, 1);
-  private static final Duration DETECT_TIMEOUT = Duration.ofSeconds(15);
 
   private final JLabel statusLabel = new JLabel(" ");
   private final JComboBox<Mode> modeBox = new JComboBox<>(Mode.values());
@@ -56,7 +51,8 @@ public final class MainWindow extends JFrame {
   private final JSpinner darkAt = timeSpinner();
   private final JSpinner latitude = coordinateSpinner(90);
   private final JSpinner longitude = coordinateSpinner(180);
-  private final JButton detectLocation = new JButton("Detect");
+  private final JComboBox<LocationPreset> locationPreset =
+      new JComboBox<>(LocationPreset.values());
   private final JSpinner sunriseOffset = offsetSpinner();
   private final JSpinner sunsetOffset = offsetSpinner();
   private final JCheckBox themeApps = new JCheckBox("Apps");
@@ -65,7 +61,7 @@ public final class MainWindow extends JFrame {
   private final List<Component> sunControls;
   private final List<Component> themeTargetControls;
   private boolean updatingMode;
-  private boolean detecting;
+  private boolean syncingLocation;
 
   public MainWindow(
       Consumer<Mode> onModeSelected, Consumer<Config> onSave, boolean hideToTray, Runnable onExit) {
@@ -84,6 +80,7 @@ public final class MainWindow extends JFrame {
     content.add(header(), BorderLayout.NORTH);
     JLabel lightAtLabel = new JLabel("Light at");
     JLabel darkAtLabel = new JLabel("Dark at");
+    JLabel countryLabel = new JLabel("Country");
     JLabel latitudeLabel = new JLabel("Latitude");
     JLabel longitudeLabel = new JLabel("Longitude");
     JLabel sunriseOffsetLabel = new JLabel("Sunrise offset, min");
@@ -92,6 +89,8 @@ public final class MainWindow extends JFrame {
     fixedTimeControls = List.of(lightAtLabel, lightAt, darkAtLabel, darkAt);
     sunControls =
         List.of(
+            countryLabel,
+            locationPreset,
             latitudeLabel,
             latitude,
             longitudeLabel,
@@ -102,16 +101,19 @@ public final class MainWindow extends JFrame {
             sunsetOffset);
     themeTargetControls = List.of(targetsLabel, themeApps, themeSystem);
     themeModeBox.addActionListener(e -> updateThemeEnabled());
-    detectLocation.addActionListener(e -> detectLocation());
+    locationPreset.addActionListener(e -> applyLocationPreset());
+    latitude.addChangeListener(e -> syncLocationPreset());
+    longitude.addChangeListener(e -> syncLocationPreset());
 
     JPanel themePanel = new JPanel(new GridBagLayout());
     themePanel.setBorder(BorderFactory.createTitledBorder("Dark mode"));
     addRow(themePanel, 0, new JLabel("Switch"), themeModeBox, themeStatusLabel);
     addRow(themePanel, 1, lightAtLabel, lightAt, darkAtLabel, darkAt);
-    addRow(themePanel, 2, latitudeLabel, latitude, longitudeLabel, longitude, detectLocation);
+    addRow(themePanel, 2, countryLabel, locationPreset);
+    addRow(themePanel, 3, latitudeLabel, latitude, longitudeLabel, longitude);
     addRow(
-        themePanel, 3, sunriseOffsetLabel, sunriseOffset, sunsetOffsetLabel, sunsetOffset);
-    addRow(themePanel, 4, targetsLabel, themeApps, themeSystem);
+        themePanel, 4, sunriseOffsetLabel, sunriseOffset, sunsetOffsetLabel, sunsetOffset);
+    addRow(themePanel, 5, targetsLabel, themeApps, themeSystem);
 
     JPanel center = new JPanel(new BorderLayout(0, 12));
     center.add(scheduleGrid(), BorderLayout.NORTH);
@@ -294,6 +296,7 @@ public final class MainWindow extends JFrame {
     sunsetOffset.setValue(theme.sunsetOffset());
     themeApps.setSelected(theme.apps());
     themeSystem.setSelected(theme.system());
+    syncLocationPreset();
     updateThemeEnabled();
   }
 
@@ -315,43 +318,35 @@ public final class MainWindow extends JFrame {
     fixedTimeControls.forEach(control -> control.setEnabled(mode == ThemeMode.FIXED_TIMES));
     sunControls.forEach(control -> control.setEnabled(mode == ThemeMode.SUN));
     themeTargetControls.forEach(control -> control.setEnabled(mode != ThemeMode.OFF));
-    detectLocation.setEnabled(mode == ThemeMode.SUN && !detecting);
   }
 
-  private void detectLocation() {
-    detecting = true;
-    updateThemeEnabled();
-    new SwingWorker<Optional<LocationDetector.Coordinates>, Void>() {
-      @Override
-      protected Optional<LocationDetector.Coordinates> doInBackground() {
-        return LocationDetector.detect(DETECT_TIMEOUT);
-      }
+  private void applyLocationPreset() {
+    LocationPreset preset = (LocationPreset) locationPreset.getSelectedItem();
+    if (syncingLocation || preset == null || preset == LocationPreset.CUSTOM) {
+      return;
+    }
+    syncingLocation = true;
+    try {
+      latitude.setValue(preset.latitude());
+      longitude.setValue(preset.longitude());
+    } finally {
+      syncingLocation = false;
+    }
+  }
 
-      @Override
-      protected void done() {
-        detecting = false;
-        updateThemeEnabled();
-        Optional<LocationDetector.Coordinates> result;
-        try {
-          result = get();
-        } catch (InterruptedException | ExecutionException e) {
-          result = Optional.empty();
-        }
-        result.ifPresentOrElse(
-            coordinates -> {
-              latitude.setValue(roundCoordinate(coordinates.latitude()));
-              longitude.setValue(roundCoordinate(coordinates.longitude()));
-            },
-            () ->
-                JOptionPane.showMessageDialog(
-                    MainWindow.this,
-                    "Could not detect your location. Turn on location services in Windows"
-                        + " Settings → Privacy & security → Location, or enter the coordinates"
-                        + " manually.",
-                    "AwakePlanner",
-                    JOptionPane.WARNING_MESSAGE));
-      }
-    }.execute();
+  private void syncLocationPreset() {
+    if (syncingLocation) {
+      return;
+    }
+    syncingLocation = true;
+    try {
+      locationPreset.setSelectedItem(
+          LocationPreset.matching(
+              ((Number) latitude.getValue()).doubleValue(),
+              ((Number) longitude.getValue()).doubleValue()));
+    } finally {
+      syncingLocation = false;
+    }
   }
 
   private static void addRow(JPanel panel, int row, Component... cells) {
@@ -379,9 +374,6 @@ public final class MainWindow extends JFrame {
         new SpinnerNumberModel(0, -ThemeSchedule.MAX_OFFSET, ThemeSchedule.MAX_OFFSET, 5));
   }
 
-  private static double roundCoordinate(double value) {
-    return Math.round(value * 10_000) / 10_000.0;
-  }
 
   private static JSpinner timeSpinner() {
     JSpinner spinner = new JSpinner(new SpinnerDateModel());
