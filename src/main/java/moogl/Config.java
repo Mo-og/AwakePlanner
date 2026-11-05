@@ -15,7 +15,11 @@ import java.util.Map;
 import java.util.Properties;
 
 public record Config(
-    Map<DayOfWeek, DaySchedule> days, Mode mode, boolean simulateKeypress, boolean startMinimized) {
+    Map<DayOfWeek, DaySchedule> days,
+    Mode mode,
+    boolean simulateKeypress,
+    boolean startMinimized,
+    ThemeSchedule theme) {
 
   private static final LocalTime DEFAULT_START = LocalTime.of(8, 30);
   private static final LocalTime DEFAULT_END = LocalTime.of(19, 0);
@@ -29,7 +33,7 @@ public record Config(
     for (DayOfWeek day : DayOfWeek.values()) {
       days.put(day, new DaySchedule(isWorkday(day), DEFAULT_START, DEFAULT_END));
     }
-    return new Config(days, Mode.SCHEDULE, false, true);
+    return new Config(days, Mode.SCHEDULE, false, true, ThemeSchedule.defaults());
   }
 
   public DaySchedule day(DayOfWeek day) {
@@ -37,7 +41,11 @@ public record Config(
   }
 
   public Config withMode(Mode newMode) {
-    return new Config(days, newMode, simulateKeypress, startMinimized);
+    return new Config(days, newMode, simulateKeypress, startMinimized, theme);
+  }
+
+  public Config withThemeMode(ThemeMode newMode) {
+    return new Config(days, mode, simulateKeypress, startMinimized, theme.withMode(newMode));
   }
 
   public static Config load(Path file) {
@@ -65,9 +73,25 @@ public record Config(
     }
     return new Config(
         days,
-        parseMode(props.getProperty("mode"), defaults.mode()),
+        parseEnum(Mode.class, props.getProperty("mode"), defaults.mode()),
         parseBoolean(props.getProperty("simulateKeypress"), defaults.simulateKeypress()),
-        parseBoolean(props.getProperty("startMinimized"), defaults.startMinimized()));
+        parseBoolean(props.getProperty("startMinimized"), defaults.startMinimized()),
+        loadTheme(props, defaults.theme()));
+  }
+
+  private static ThemeSchedule loadTheme(Properties props, ThemeSchedule fallback) {
+    ThemeSchedule loaded =
+        new ThemeSchedule(
+            parseEnum(ThemeMode.class, props.getProperty("theme.mode"), fallback.mode()),
+            parseTime(props.getProperty("theme.lightAt"), fallback.lightAt()),
+            parseTime(props.getProperty("theme.darkAt"), fallback.darkAt()),
+            parseDouble(props.getProperty("theme.latitude"), fallback.latitude()),
+            parseDouble(props.getProperty("theme.longitude"), fallback.longitude()),
+            parseInt(props.getProperty("theme.sunriseOffset"), fallback.sunriseOffset()),
+            parseInt(props.getProperty("theme.sunsetOffset"), fallback.sunsetOffset()),
+            parseBoolean(props.getProperty("theme.apps"), fallback.apps()),
+            parseBoolean(props.getProperty("theme.system"), fallback.system()));
+    return loaded.isValid() ? loaded : fallback;
   }
 
   public void save(Path file) throws IOException {
@@ -82,6 +106,15 @@ public record Config(
           props.setProperty(key + ".start", schedule.start().toString());
           props.setProperty(key + ".end", schedule.end().toString());
         });
+    props.setProperty("theme.mode", theme.mode().name());
+    props.setProperty("theme.lightAt", theme.lightAt().toString());
+    props.setProperty("theme.darkAt", theme.darkAt().toString());
+    props.setProperty("theme.latitude", Double.toString(theme.latitude()));
+    props.setProperty("theme.longitude", Double.toString(theme.longitude()));
+    props.setProperty("theme.sunriseOffset", Integer.toString(theme.sunriseOffset()));
+    props.setProperty("theme.sunsetOffset", Integer.toString(theme.sunsetOffset()));
+    props.setProperty("theme.apps", Boolean.toString(theme.apps()));
+    props.setProperty("theme.system", Boolean.toString(theme.system()));
     Files.createDirectories(file.toAbsolutePath().getParent());
     try (Writer writer = Files.newBufferedWriter(file)) {
       props.store(writer, "AwakePlanner settings");
@@ -117,12 +150,35 @@ public record Config(
     }
   }
 
-  private static Mode parseMode(String value, Mode fallback) {
+  private static double parseDouble(String value, double fallback) {
     if (value == null) {
       return fallback;
     }
     try {
-      return Mode.valueOf(value.trim());
+      double parsed = Double.parseDouble(value.trim());
+      return Double.isFinite(parsed) ? parsed : fallback;
+    } catch (NumberFormatException e) {
+      return fallback;
+    }
+  }
+
+  private static int parseInt(String value, int fallback) {
+    if (value == null) {
+      return fallback;
+    }
+    try {
+      return Integer.parseInt(value.trim());
+    } catch (NumberFormatException e) {
+      return fallback;
+    }
+  }
+
+  private static <E extends Enum<E>> E parseEnum(Class<E> type, String value, E fallback) {
+    if (value == null) {
+      return fallback;
+    }
+    try {
+      return Enum.valueOf(type, value.trim());
     } catch (IllegalArgumentException e) {
       return fallback;
     }

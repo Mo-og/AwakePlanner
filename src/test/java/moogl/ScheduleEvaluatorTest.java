@@ -52,7 +52,7 @@ class ScheduleEvaluatorTest {
     for (DayOfWeek day : DayOfWeek.values()) {
       days.put(day, new DaySchedule(false, LocalTime.of(8, 30), LocalTime.of(19, 0)));
     }
-    Config disabled = new Config(days, Mode.SCHEDULE, false, true);
+    Config disabled = new Config(days, Mode.SCHEDULE, false, true, ThemeSchedule.defaults());
 
     assertEquals(Optional.empty(), ScheduleEvaluator.nextStart(disabled, MONDAY));
     assertEquals(
