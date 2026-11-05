@@ -19,6 +19,7 @@ public record Config(
     Mode mode,
     boolean simulateKeypress,
     boolean startMinimized,
+    boolean autoUpdate,
     ThemeSchedule theme) {
 
   private static final LocalTime DEFAULT_START = LocalTime.of(8, 30);
@@ -33,7 +34,7 @@ public record Config(
     for (DayOfWeek day : DayOfWeek.values()) {
       days.put(day, new DaySchedule(isWorkday(day), DEFAULT_START, DEFAULT_END));
     }
-    return new Config(days, Mode.SCHEDULE, false, true, ThemeSchedule.defaults());
+    return new Config(days, Mode.SCHEDULE, false, true, true, ThemeSchedule.defaults());
   }
 
   public DaySchedule day(DayOfWeek day) {
@@ -41,11 +42,12 @@ public record Config(
   }
 
   public Config withMode(Mode newMode) {
-    return new Config(days, newMode, simulateKeypress, startMinimized, theme);
+    return new Config(days, newMode, simulateKeypress, startMinimized, autoUpdate, theme);
   }
 
   public Config withThemeMode(ThemeMode newMode) {
-    return new Config(days, mode, simulateKeypress, startMinimized, theme.withMode(newMode));
+    return new Config(
+        days, mode, simulateKeypress, startMinimized, autoUpdate, theme.withMode(newMode));
   }
 
   public static Config load(Path file) {
@@ -76,6 +78,7 @@ public record Config(
         parseEnum(Mode.class, props.getProperty("mode"), defaults.mode()),
         parseBoolean(props.getProperty("simulateKeypress"), defaults.simulateKeypress()),
         parseBoolean(props.getProperty("startMinimized"), defaults.startMinimized()),
+        parseBoolean(props.getProperty("autoUpdate"), defaults.autoUpdate()),
         loadTheme(props, defaults.theme()));
   }
 
@@ -99,6 +102,7 @@ public record Config(
     props.setProperty("mode", mode.name());
     props.setProperty("simulateKeypress", Boolean.toString(simulateKeypress));
     props.setProperty("startMinimized", Boolean.toString(startMinimized));
+    props.setProperty("autoUpdate", Boolean.toString(autoUpdate));
     days.forEach(
         (day, schedule) -> {
           String key = key(day);

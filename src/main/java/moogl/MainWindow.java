@@ -4,6 +4,7 @@ import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.Image;
 import java.awt.Component;
 import java.awt.Insets;
 import java.awt.event.WindowAdapter;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.stream.IntStream;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -45,6 +47,8 @@ public final class MainWindow extends JFrame {
   private final JCheckBox simulateKeypress =
       new JCheckBox("Simulate F15 keypress (beats policy screen lock)");
   private final JCheckBox startMinimized = new JCheckBox("Start hidden in tray");
+  private final JCheckBox autoUpdate = new JCheckBox("Install updates automatically");
+  private final JLabel updateStatusLabel = new JLabel(" ");
   private final JComboBox<ThemeMode> themeModeBox = new JComboBox<>(ThemeMode.values());
   private final JLabel themeStatusLabel = new JLabel(" ");
   private final JSpinner lightAt = timeSpinner();
@@ -64,9 +68,17 @@ public final class MainWindow extends JFrame {
   private boolean syncingLocation;
 
   public MainWindow(
-      Consumer<Mode> onModeSelected, Consumer<Config> onSave, boolean hideToTray, Runnable onExit) {
+      Consumer<Mode> onModeSelected,
+      Consumer<Config> onSave,
+      Runnable onCheckForUpdates,
+      Version version,
+      boolean hideToTray,
+      Runnable onExit) {
     super("AwakePlanner");
-    setIconImage(StatusIcons.dot(true, 32));
+    setIconImages(
+        IntStream.of(16, 24, 32, 48, 64)
+            .mapToObj(size -> (Image) StatusIcons.appIcon(true, size))
+            .toList());
 
     modeBox.addActionListener(
         e -> {
@@ -119,7 +131,7 @@ public final class MainWindow extends JFrame {
     center.add(scheduleGrid(), BorderLayout.NORTH);
     center.add(themePanel, BorderLayout.CENTER);
     content.add(center, BorderLayout.CENTER);
-    content.add(footer(onSave), BorderLayout.SOUTH);
+    content.add(footer(onSave, onCheckForUpdates, version), BorderLayout.SOUTH);
     setContentPane(content);
 
     if (hideToTray) {
@@ -160,7 +172,12 @@ public final class MainWindow extends JFrame {
     rows.forEach((day, row) -> row.set(config.day(day)));
     simulateKeypress.setSelected(config.simulateKeypress());
     startMinimized.setSelected(config.startMinimized());
+    autoUpdate.setSelected(config.autoUpdate());
     showTheme(config.theme());
+  }
+
+  public void showUpdateStatus(String description) {
+    updateStatusLabel.setText(description);
   }
 
   public void showThemeMode(ThemeMode mode) {
@@ -181,7 +198,7 @@ public final class MainWindow extends JFrame {
   }
 
   public void showStatus(Status status) {
-    statusLabel.setIcon(new ImageIcon(StatusIcons.dot(status.active(), 14)));
+    statusLabel.setIcon(new ImageIcon(StatusIcons.appIcon(status.active(), 14)));
     statusLabel.setText(status.description());
   }
 
@@ -223,11 +240,12 @@ public final class MainWindow extends JFrame {
     return panel;
   }
 
-  private JPanel footer(Consumer<Config> onSave) {
+  private JPanel footer(Consumer<Config> onSave, Runnable onCheckForUpdates, Version version) {
     JPanel options = new JPanel();
     options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS));
     options.add(simulateKeypress);
     options.add(startMinimized);
+    options.add(autoUpdate);
 
     JButton reset = new JButton("Reset defaults");
     reset.addActionListener(
@@ -236,6 +254,7 @@ public final class MainWindow extends JFrame {
           rows.forEach((day, row) -> row.set(defaults.day(day)));
           simulateKeypress.setSelected(defaults.simulateKeypress());
           startMinimized.setSelected(defaults.startMinimized());
+          autoUpdate.setSelected(defaults.autoUpdate());
           showTheme(defaults.theme());
         });
 
@@ -247,9 +266,23 @@ public final class MainWindow extends JFrame {
     buttons.add(reset);
     buttons.add(save);
 
+    JButton checkForUpdates = new JButton("Check for updates");
+    checkForUpdates.addActionListener(e -> onCheckForUpdates.run());
+
+    JPanel updates = new JPanel();
+    updates.setLayout(new BoxLayout(updates, BoxLayout.X_AXIS));
+    updates.add(new JLabel("Version " + version + "  "));
+    updates.add(updateStatusLabel);
+    updates.add(Box.createHorizontalGlue());
+    updates.add(checkForUpdates);
+
+    JPanel south = new JPanel(new BorderLayout(0, 8));
+    south.add(updates, BorderLayout.NORTH);
+    south.add(buttons, BorderLayout.SOUTH);
+
     JPanel panel = new JPanel(new BorderLayout(0, 8));
     panel.add(options, BorderLayout.CENTER);
-    panel.add(buttons, BorderLayout.SOUTH);
+    panel.add(south, BorderLayout.SOUTH);
     return panel;
   }
 
@@ -283,6 +316,7 @@ public final class MainWindow extends JFrame {
             (Mode) modeBox.getSelectedItem(),
             simulateKeypress.isSelected(),
             startMinimized.isSelected(),
+            autoUpdate.isSelected(),
             theme));
   }
 

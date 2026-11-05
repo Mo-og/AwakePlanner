@@ -60,6 +60,7 @@ class ThemeServiceTest {
             config.mode(),
             config.simulateKeypress(),
             config.startMinimized(),
+            config.autoUpdate(),
             darkFromEleven));
     control.awaitApplied(2);
     service.shutdown();

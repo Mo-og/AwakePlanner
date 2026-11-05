@@ -26,6 +26,7 @@ public final class TrayController {
       Runnable onOpen,
       Consumer<Mode> onModeSelected,
       Consumer<ThemeMode> onThemeModeSelected,
+      Runnable onCheckForUpdates,
       Runnable onExit)
       throws AWTException {
     Dimension size = tray.getTrayIconSize();
@@ -50,6 +51,9 @@ public final class TrayController {
       themeMenu.add(item);
     }
 
+    MenuItem checkForUpdates = new MenuItem("Check for updates");
+    checkForUpdates.addActionListener(e -> onCheckForUpdates.run());
+
     MenuItem exit = new MenuItem("Exit");
     exit.addActionListener(e -> onExit.run());
 
@@ -57,17 +61,18 @@ public final class TrayController {
     popup.add(open);
     popup.add(modeMenu);
     popup.add(themeMenu);
+    popup.add(checkForUpdates);
     popup.addSeparator();
     popup.add(exit);
 
-    icon = new TrayIcon(StatusIcons.dot(false, iconSize), "AwakePlanner", popup);
+    icon = new TrayIcon(StatusIcons.appIcon(false, iconSize), "AwakePlanner", popup);
     icon.setImageAutoSize(true);
     icon.addActionListener(e -> onOpen.run());
     tray.add(icon);
   }
 
   public void showStatus(Status status) {
-    icon.setImage(StatusIcons.dot(status.active(), iconSize));
+    icon.setImage(StatusIcons.appIcon(status.active(), iconSize));
     keepAwakeStatus = status.description();
     updateToolTip();
   }
@@ -75,6 +80,10 @@ public final class TrayController {
   public void showThemeStatus(String description) {
     themeStatus = description;
     updateToolTip();
+  }
+
+  public void showMessage(String message) {
+    icon.displayMessage("AwakePlanner", message, TrayIcon.MessageType.INFO);
   }
 
   public void showThemeMode(ThemeMode mode) {

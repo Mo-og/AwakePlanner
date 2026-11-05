@@ -25,6 +25,7 @@ class ConfigTest {
         config.day(DayOfWeek.FRIDAY));
     assertEquals(false, config.day(DayOfWeek.SUNDAY).enabled());
     assertEquals(Mode.SCHEDULE, config.mode());
+    assertEquals(true, config.autoUpdate());
   }
 
   @Test
@@ -36,7 +37,7 @@ class ConfigTest {
   void roundTripsThroughFile() throws IOException {
     Map<DayOfWeek, DaySchedule> days = new EnumMap<>(Config.defaults().days());
     days.put(DayOfWeek.SATURDAY, new DaySchedule(true, LocalTime.of(10, 0), LocalTime.of(14, 15)));
-    Config config = new Config(days, Mode.ALWAYS_ON, true, false, ThemeSchedule.defaults());
+    Config config = new Config(days, Mode.ALWAYS_ON, true, false, false, ThemeSchedule.defaults());
     Path file = dir.resolve("nested/config.properties");
 
     config.save(file);
@@ -80,7 +81,7 @@ class ConfigTest {
             true,
             false);
     Config defaults = Config.defaults();
-    Config config = new Config(defaults.days(), Mode.OFF, true, false, theme);
+    Config config = new Config(defaults.days(), Mode.OFF, true, false, true, theme);
     Path file = dir.resolve("config.properties");
 
     config.save(file);
