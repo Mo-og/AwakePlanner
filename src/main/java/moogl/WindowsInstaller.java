@@ -5,21 +5,25 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.Optional;
 
 public final class WindowsInstaller implements UpdateService.Installer {
 
   private final long pid;
   private final Path javaw;
+  private final Optional<Path> launcher;
 
   public WindowsInstaller() {
     this(
         ProcessHandle.current().pid(),
-        Path.of(System.getProperty("java.home"), "bin", "javaw.exe"));
+        Path.of(System.getProperty("java.home"), "bin", "javaw.exe"),
+        RuntimeInfo.launcher());
   }
 
-  WindowsInstaller(long pid, Path javaw) {
+  WindowsInstaller(long pid, Path javaw, Optional<Path> launcher) {
     this.pid = pid;
     this.javaw = javaw;
+    this.launcher = launcher;
   }
 
   @Override
@@ -33,10 +37,14 @@ public final class WindowsInstaller implements UpdateService.Installer {
   }
 
   String script(Path update, Path target) {
-    String launch =
-        target.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".exe")
-            ? "start \"\" \"" + target + "\""
-            : "start \"\" \"" + javaw + "\" -jar \"" + target + "\"";
+    String launch;
+    if (launcher.isPresent()) {
+      launch = "start \"\" \"" + launcher.get() + "\"";
+    } else if (target.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".exe")) {
+      launch = "start \"\" \"" + target + "\"";
+    } else {
+      launch = "start \"\" \"" + javaw + "\" -jar \"" + target + "\"";
+    }
     return String.join(
         "\r\n",
         "@echo off",

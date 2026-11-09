@@ -19,11 +19,13 @@ public final class WindowsThemeControl implements ThemeControl {
   private static final String PERSONALIZE_KEY =
       "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
   private static final int REG_DWORD = 4;
+  private static final int RRF_RT_REG_DWORD = 0x00000010;
   private static final int WM_SETTINGCHANGE = 0x001A;
   private static final int SMTO_ABORTIFHUNG = 0x0002;
   private static final int BROADCAST_TIMEOUT_MS = 2000;
 
   private final MethodHandle regSetKeyValue;
+  private final MethodHandle regGetValue;
   private final MethodHandle sendMessageTimeout;
 
   public WindowsThemeControl() {
@@ -34,6 +36,11 @@ public final class WindowsThemeControl implements ThemeControl {
         linker.downcallHandle(
             advapi32.findOrThrow("RegSetKeyValueW"),
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, JAVA_INT));
+    regGetValue =
+        linker.downcallHandle(
+            advapi32.findOrThrow("RegGetValueW"),
+            FunctionDescriptor.of(
+                JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
     sendMessageTimeout =
         linker.downcallHandle(
             user32.findOrThrow("SendMessageTimeoutW"),
@@ -52,6 +59,27 @@ public final class WindowsThemeControl implements ThemeControl {
         setDword(arena, "SystemUsesLightTheme", light);
       }
       broadcastColorChange(arena);
+    }
+  }
+
+  @Override
+  public Theme current() {
+    try (Arena arena = Arena.ofConfined()) {
+      MemorySegment data = arena.allocate(JAVA_INT);
+      MemorySegment size = arena.allocateFrom(JAVA_INT, (int) JAVA_INT.byteSize());
+      int status =
+          (int)
+              regGetValue.invokeExact(
+                  HKEY_CURRENT_USER,
+                  wide(arena, PERSONALIZE_KEY),
+                  wide(arena, "AppsUseLightTheme"),
+                  RRF_RT_REG_DWORD,
+                  MemorySegment.NULL,
+                  data,
+                  size);
+      return status == 0 && data.get(JAVA_INT, 0) == 0 ? Theme.DARK : Theme.LIGHT;
+    } catch (Throwable e) {
+      return Theme.LIGHT;
     }
   }
 

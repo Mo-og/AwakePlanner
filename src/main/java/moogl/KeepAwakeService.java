@@ -3,15 +3,19 @@ package moogl;
 import java.awt.AWTException;
 import java.awt.Robot;
 import java.awt.event.KeyEvent;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
@@ -26,6 +30,7 @@ public final class KeepAwakeService {
 
   private final PowerControl power;
   private final Clock clock;
+  private final Path overrideFile;
   private final ScheduledExecutorService executor =
       Executors.newSingleThreadScheduledExecutor(
           runnable -> {
@@ -36,14 +41,23 @@ public final class KeepAwakeService {
   private final List<Consumer<Status>> listeners = new CopyOnWriteArrayList<>();
 
   private volatile Config config;
+  private volatile Status status = new Status(false, "Starting…", Optional.empty());
+  private Optional<AwakeOverride> override;
+  private ScheduledFuture<?> boundaryTick;
   private Boolean lastActive;
   private Instant lastKeypress = Instant.MIN;
   private Robot robot;
 
-  public KeepAwakeService(PowerControl power, Clock clock, Config config) {
+  public KeepAwakeService(PowerControl power, Clock clock, Config config, Path overrideFile) {
     this.power = power;
     this.clock = clock;
     this.config = config;
+    this.overrideFile = overrideFile;
+    this.override = AwakeOverride.load(overrideFile);
+  }
+
+  public Status currentStatus() {
+    return status;
   }
 
   public void addListener(Consumer<Status> listener) {
@@ -55,8 +69,23 @@ public final class KeepAwakeService {
   }
 
   public void update(Config newConfig) {
-    config = newConfig;
-    executor.execute(this::tick);
+    executor.execute(
+        () -> {
+          if (newConfig.mode() != config.mode()) {
+            setOverride(Optional.empty());
+          }
+          config = newConfig;
+          tick();
+        });
+  }
+
+  public void adjust(Duration delta) {
+    executor.execute(
+        () -> {
+          setOverride(
+              AwakeOverride.adjust(config, override, LocalDateTime.now(clock), delta));
+          tick();
+        });
   }
 
   public void shutdown() {
@@ -77,7 +106,13 @@ public final class KeepAwakeService {
   private void tick() {
     try {
       Config current = config;
-      Status status = ScheduleEvaluator.status(current, LocalDateTime.now(clock));
+      LocalDateTime now = LocalDateTime.now(clock);
+      if (override.isPresent() && override.get().isExpired(now)) {
+        setOverride(Optional.empty());
+      }
+      Status status = ScheduleEvaluator.status(current, override, now);
+      this.status = status;
+      scheduleBoundaryTick(now);
       if (status.active()) {
         power.keepAwake();
         if (current.simulateKeypress()) {
@@ -94,6 +129,35 @@ public final class KeepAwakeService {
     } catch (RuntimeException e) {
       LOG.log(Level.SEVERE, "Keep-awake tick failed", e);
     }
+  }
+
+  private void setOverride(Optional<AwakeOverride> newOverride) {
+    if (newOverride.equals(override)) {
+      return;
+    }
+    override = newOverride;
+    LOG.info(newOverride.map(o -> "Awake override until " + o.until()).orElse("Awake override cleared"));
+    try {
+      AwakeOverride.save(overrideFile, newOverride);
+    } catch (IOException e) {
+      LOG.log(Level.WARNING, "Could not save awake override", e);
+    }
+  }
+
+  private void scheduleBoundaryTick(LocalDateTime now) {
+    if (boundaryTick != null) {
+      boundaryTick.cancel(false);
+      boundaryTick = null;
+    }
+    override
+        .flatMap(o -> o.nextBoundary(now))
+        .map(boundary -> Duration.between(now, boundary))
+        .filter(delay -> delay.compareTo(TICK) < 0)
+        .ifPresent(
+            delay ->
+                boundaryTick =
+                    executor.schedule(
+                        this::tick, delay.toMillis() + 50, TimeUnit.MILLISECONDS));
   }
 
   private void pressF15IfDue() {

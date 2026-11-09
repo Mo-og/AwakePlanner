@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -20,14 +23,16 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - name: Build jar and exe
-        run: mvn -B -Drevision="${GITHUB_REF_NAME#v}" package
+      - name: Build jar, exe and full package
+        run: mvn -B -Drevision="${GITHUB_REF_NAME#v}" -Pfull package
 
       - name: Checksums
         working-directory: target
         run: |
           sha256sum AwakePlanner.jar > AwakePlanner.jar.sha256
           sha256sum AwakePlanner.exe > AwakePlanner.exe.sha256
+          sha256sum AwakePlanner-full.zip > AwakePlanner-full.zip.sha256
+          sha256sum AwakePlanner.runtime > AwakePlanner.runtime.sha256
 
       - name: Publish release
         env:
@@ -36,5 +41,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             target/AwakePlanner.jar target/AwakePlanner.jar.sha256 \
             target/AwakePlanner.exe target/AwakePlanner.exe.sha256 \
+            target/AwakePlanner-full.zip target/AwakePlanner-full.zip.sha256 \
+            target/AwakePlanner.runtime target/AwakePlanner.runtime.sha256 \
             --title "AwakePlanner $GITHUB_REF_NAME" \
             --generate-notes

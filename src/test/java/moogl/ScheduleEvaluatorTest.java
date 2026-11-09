@@ -52,7 +52,15 @@ class ScheduleEvaluatorTest {
     for (DayOfWeek day : DayOfWeek.values()) {
       days.put(day, new DaySchedule(false, LocalTime.of(8, 30), LocalTime.of(19, 0)));
     }
-    Config disabled = new Config(days, Mode.SCHEDULE, false, true, true, ThemeSchedule.defaults());
+    Config disabled =
+        new Config(
+            days,
+            Mode.SCHEDULE,
+            false,
+            true,
+            true,
+            ThemeSchedule.defaults(),
+            TimerSettings.defaults());
 
     assertEquals(Optional.empty(), ScheduleEvaluator.nextStart(disabled, MONDAY));
     assertEquals(
@@ -68,13 +76,55 @@ class ScheduleEvaluatorTest {
   @Test
   void statusDescribesState() {
     assertEquals(
-        new Status(true, "Active – until 19:00"),
+        new Status(true, "Active – until 19:00", Optional.of(MONDAY.withHour(19))),
         ScheduleEvaluator.status(config, MONDAY.withHour(12)));
     assertEquals(
-        new Status(false, "Idle – next start Tue 08:30"),
+        new Status(false, "Idle – next start Tue 08:30", Optional.empty()),
         ScheduleEvaluator.status(config, MONDAY.withHour(20)));
     assertEquals(
-        new Status(false, "Idle – next start today 08:30"),
+        new Status(false, "Idle – next start today 08:30", Optional.empty()),
         ScheduleEvaluator.status(config, MONDAY.withHour(6)));
+  }
+
+  @Test
+  void alwaysOnHasNoEnd() {
+    Status status = ScheduleEvaluator.status(config.withMode(Mode.ALWAYS_ON), MONDAY);
+
+    assertEquals(Optional.empty(), status.until());
+    assertFalse(status.adjustable());
+  }
+
+  @Test
+  void extensionIsDescribed() {
+    Optional<AwakeOverride> override =
+        Optional.of(new AwakeOverride(MONDAY.withHour(19).withMinute(15), MONDAY.withHour(19)));
+
+    Status status = ScheduleEvaluator.status(config, override, MONDAY.withHour(12));
+
+    assertEquals("Active – until 19:15 (extended)", status.description());
+    assertEquals(Optional.of(MONDAY.withHour(19).withMinute(15)), status.until());
+  }
+
+  @Test
+  void temporarySessionRunsInOffMode() {
+    Optional<AwakeOverride> override =
+        Optional.of(new AwakeOverride(MONDAY.plusDays(1).withHour(1), null));
+
+    Status status =
+        ScheduleEvaluator.status(config.withMode(Mode.OFF), override, MONDAY.withHour(23));
+
+    assertTrue(status.active());
+    assertEquals("Active – until Tue 01:00 (temporary)", status.description());
+  }
+
+  @Test
+  void shortenedBlockStaysIdleUntilItsEnd() {
+    Optional<AwakeOverride> override =
+        Optional.of(new AwakeOverride(MONDAY.withHour(12), MONDAY.withHour(19)));
+
+    Status status = ScheduleEvaluator.status(config, override, MONDAY.withHour(13));
+
+    assertFalse(status.active());
+    assertEquals("Idle – stopped early, next start Tue 08:30", status.description());
   }
 }

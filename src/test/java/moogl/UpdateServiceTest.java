@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +44,9 @@ class UpdateServiceTest {
   private final AtomicInteger restarts = new AtomicInteger();
   private String latestTag = "v1.2.0";
   private String checksum = sha256(EXE);
+  private String runtimeRequirement;
+  private RuntimeInfo runtime = new RuntimeInfo(25, Optional.empty());
+  private final List<UpdateService.Update> updates = new ArrayList<>();
 
   @BeforeEach
   void startServer() throws IOException {
@@ -70,6 +74,15 @@ class UpdateServiceTest {
                 exchange,
                 200,
                 (checksum + "  AwakePlanner.exe\n").getBytes(StandardCharsets.UTF_8)));
+    server.createContext(
+        "/owner/repo/releases/download/v1.2.0/AwakePlanner.runtime",
+        exchange -> {
+          if (runtimeRequirement == null) {
+            respond(exchange, 404, new byte[0]);
+          } else {
+            respond(exchange, 200, runtimeRequirement.getBytes(StandardCharsets.UTF_8));
+          }
+        });
     server.start();
   }
 
@@ -159,6 +172,56 @@ class UpdateServiceTest {
     assertEquals("AwakePlanner.jar", UpdateService.assetName(Path.of("AwakePlanner.jar")));
   }
 
+  @Test
+  void compatibleRuntimeRequirementInstalls() {
+    runtimeRequirement = "java=25\nmodules=java.base,java.desktop\n";
+
+    service(INSTALLED, Optional.of(dir.resolve("AwakePlanner.exe")), NOW).check(false);
+
+    assertEquals(dir.resolve("AwakePlanner.exe"), installer.target);
+  }
+
+  @Test
+  void newerJavaNeedsManualDownload() {
+    runtimeRequirement = "java=99\nmodules=java.base\n";
+
+    service(INSTALLED, Optional.of(dir.resolve("AwakePlanner.exe")), NOW).check(false);
+
+    assertEquals(null, installer.target);
+    UpdateService.Update update = updates.getLast();
+    assertEquals("v1.2.0 needs a manual download", update.message());
+    assertTrue(update.important());
+    UpdateService.ManualDownload download = update.manualDownload().orElseThrow();
+    assertTrue(download.reason().contains("Java 99"));
+    assertTrue(download.releasePage().toString().endsWith("/owner/repo/releases/tag/v1.2.0"));
+  }
+
+  @Test
+  void missingBundledModuleNeedsManualDownload() {
+    runtimeRequirement = "java=25\nmodules=java.base,java.sql\n";
+    runtime = new RuntimeInfo(25, Optional.of(Set.of("java.base", "java.desktop")));
+
+    service(INSTALLED, Optional.of(dir.resolve("app/AwakePlanner.jar")), NOW).check(false);
+
+    assertEquals(null, installer.target);
+    assertEquals(
+        "the bundled Java runtime lacks java.sql",
+        updates.getLast().manualDownload().orElseThrow().reason());
+  }
+
+  @Test
+  void manualDownloadPromptsOncePerVersionUnlessCheckedManually() {
+    runtimeRequirement = "java=99\n";
+    Optional<Path> target = Optional.of(dir.resolve("AwakePlanner.exe"));
+
+    service(INSTALLED, target, NOW).check(false);
+    service(INSTALLED, target, NOW).check(false);
+    assertFalse(updates.getLast().important());
+
+    service(INSTALLED, target, NOW).check(true);
+    assertTrue(updates.getLast().important());
+  }
+
   private UpdateService service(Version current, Optional<Path> target, Instant now) {
     UpdateService service =
         new UpdateService(
@@ -169,8 +232,13 @@ class UpdateServiceTest {
             installer,
             restarts::incrementAndGet,
             Clock.fixed(now, ZoneOffset.UTC),
+            runtime,
             true);
-    service.addListener(update -> messages.add(update.message()));
+    service.addListener(
+        update -> {
+          messages.add(update.message());
+          updates.add(update);
+        });
     return service;
   }
 

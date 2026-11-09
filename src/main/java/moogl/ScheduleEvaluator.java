@@ -20,6 +20,16 @@ public final class ScheduleEvaluator {
     };
   }
 
+  public static Optional<LocalDateTime> naturalEnd(Config config, LocalDateTime now) {
+    if (config.mode() != Mode.SCHEDULE) {
+      return Optional.empty();
+    }
+    DaySchedule schedule = config.day(now.getDayOfWeek());
+    return schedule.contains(now.toLocalTime())
+        ? Optional.of(now.toLocalDate().atTime(schedule.end()))
+        : Optional.empty();
+  }
+
   public static Optional<LocalDateTime> nextStart(Config config, LocalDateTime now) {
     if (config.mode() != Mode.SCHEDULE) {
       return Optional.empty();
@@ -38,19 +48,58 @@ public final class ScheduleEvaluator {
   }
 
   public static Status status(Config config, LocalDateTime now) {
-    boolean active = isActive(config, now);
-    String description =
-        switch (config.mode()) {
-          case ALWAYS_ON -> "Active – always on";
-          case OFF -> "Idle – turned off";
-          case SCHEDULE ->
-              active
-                  ? "Active – until " + TIME.format(config.day(now.getDayOfWeek()).end())
-                  : nextStart(config, now)
-                      .map(start -> "Idle – next start " + describe(start, now))
-                      .orElse("Idle – no days scheduled");
-        };
-    return new Status(active, description);
+    return status(config, Optional.empty(), now);
+  }
+
+  public static Status status(
+      Config config, Optional<AwakeOverride> override, LocalDateTime now) {
+    if (config.mode() == Mode.ALWAYS_ON) {
+      return new Status(true, "Active – always on", Optional.empty());
+    }
+    Optional<AwakeOverride> live = override.filter(o -> !o.isExpired(now));
+    if (live.isPresent()) {
+      return overridden(config, live.get(), now);
+    }
+    if (config.mode() == Mode.OFF) {
+      return new Status(false, "Idle – turned off", Optional.empty());
+    }
+    Optional<LocalDateTime> end = naturalEnd(config, now);
+    if (end.isPresent()) {
+      return new Status(true, "Active – until " + TIME.format(end.get()), end);
+    }
+    return new Status(false, idleDescription(config, now), Optional.empty());
+  }
+
+  private static Status overridden(Config config, AwakeOverride override, LocalDateTime now) {
+    if (override.keepsAwake(now)) {
+      String note;
+      if (override.replacedEnd() == null) {
+        note = "temporary";
+      } else if (override.until().isAfter(override.replacedEnd())) {
+        note = "extended";
+      } else {
+        note = "shortened";
+      }
+      return new Status(
+          true,
+          "Active – until " + describeEnd(override.until(), now) + " (" + note + ")",
+          Optional.of(override.until()));
+    }
+    String next =
+        nextStart(config, override.replacedEnd())
+            .map(start -> ", next start " + describe(start, now))
+            .orElse("");
+    return new Status(false, "Idle – stopped early" + next, Optional.empty());
+  }
+
+  private static String idleDescription(Config config, LocalDateTime now) {
+    return nextStart(config, now)
+        .map(start -> "Idle – next start " + describe(start, now))
+        .orElse("Idle – no days scheduled");
+  }
+
+  private static String describeEnd(LocalDateTime end, LocalDateTime now) {
+    return end.toLocalDate().equals(now.toLocalDate()) ? TIME.format(end) : describe(end, now);
   }
 
   private static String describe(LocalDateTime start, LocalDateTime now) {

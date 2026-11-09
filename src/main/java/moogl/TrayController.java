@@ -8,6 +8,8 @@ import java.awt.MenuItem;
 import java.awt.PopupMenu;
 import java.awt.SystemTray;
 import java.awt.TrayIcon;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -24,6 +26,7 @@ public final class TrayController {
 
   public TrayController(
       Runnable onOpen,
+      Runnable onShowTimer,
       Consumer<Mode> onModeSelected,
       Consumer<ThemeMode> onThemeModeSelected,
       Runnable onCheckForUpdates,
@@ -34,6 +37,9 @@ public final class TrayController {
 
     MenuItem open = new MenuItem("Open");
     open.addActionListener(e -> onOpen.run());
+
+    MenuItem showTimer = new MenuItem("Show timer");
+    showTimer.addActionListener(e -> onShowTimer.run());
 
     Menu modeMenu = new Menu("Mode");
     for (Mode mode : Mode.values()) {
@@ -59,6 +65,7 @@ public final class TrayController {
 
     PopupMenu popup = new PopupMenu();
     popup.add(open);
+    popup.add(showTimer);
     popup.add(modeMenu);
     popup.add(themeMenu);
     popup.add(checkForUpdates);
@@ -68,6 +75,15 @@ public final class TrayController {
     icon = new TrayIcon(StatusIcons.appIcon(false, iconSize), "AwakePlanner", popup);
     icon.setImageAutoSize(true);
     icon.addActionListener(e -> onOpen.run());
+    icon.addMouseListener(
+        new MouseAdapter() {
+          @Override
+          public void mouseClicked(MouseEvent e) {
+            if (e.getButton() == MouseEvent.BUTTON1 && e.getClickCount() == 1) {
+              onShowTimer.run();
+            }
+          }
+        });
     tray.add(icon);
   }
 

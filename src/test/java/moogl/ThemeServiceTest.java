@@ -61,7 +61,8 @@ class ThemeServiceTest {
             config.simulateKeypress(),
             config.startMinimized(),
             config.autoUpdate(),
-            darkFromEleven));
+            darkFromEleven,
+            config.timer()));
     control.awaitApplied(2);
     service.shutdown();
 
@@ -74,6 +75,11 @@ class ThemeServiceTest {
     @Override
     public void apply(Theme theme, boolean apps, boolean system) {
       applied.add(theme);
+    }
+
+    @Override
+    public Theme current() {
+      return applied.isEmpty() ? Theme.LIGHT : applied.getLast();
     }
 
     void awaitApplied(int count) throws InterruptedException {

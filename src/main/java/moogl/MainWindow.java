@@ -7,6 +7,10 @@ import java.awt.GridBagLayout;
 import java.awt.Image;
 import java.awt.Component;
 import java.awt.Insets;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.time.DayOfWeek;
@@ -19,6 +23,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 import javax.swing.BorderFactory;
@@ -33,6 +38,7 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
+import javax.swing.JTextField;
 import javax.swing.SpinnerDateModel;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.WindowConstants;
@@ -61,6 +67,18 @@ public final class MainWindow extends JFrame {
   private final JSpinner sunsetOffset = offsetSpinner();
   private final JCheckBox themeApps = new JCheckBox("Apps");
   private final JCheckBox themeSystem = new JCheckBox("Windows (taskbar, Start)");
+  private final JCheckBox hotkeyEnabled = new JCheckBox("Hotkey");
+  private final HotkeyField hotkeyField = new HotkeyField();
+  private final JButton clearHotkey = new JButton("Clear");
+  private final JLabel hotkeyStatusLabel = new JLabel(" ");
+  private final JCheckBox autoClose = new JCheckBox("Close automatically after");
+  private final JSpinner autoCloseSeconds =
+      new JSpinner(
+          new SpinnerNumberModel(
+              TimerSettings.DEFAULT_AUTO_CLOSE,
+              TimerSettings.MIN_AUTO_CLOSE,
+              TimerSettings.MAX_AUTO_CLOSE,
+              5));
   private final List<Component> fixedTimeControls;
   private final List<Component> sunControls;
   private final List<Component> themeTargetControls;
@@ -73,6 +91,7 @@ public final class MainWindow extends JFrame {
       Runnable onCheckForUpdates,
       Version version,
       boolean hideToTray,
+      Consumer<Boolean> onHotkeyRecording,
       Runnable onExit) {
     super("AwakePlanner");
     setIconImages(
@@ -127,9 +146,33 @@ public final class MainWindow extends JFrame {
         themePanel, 4, sunriseOffsetLabel, sunriseOffset, sunsetOffsetLabel, sunsetOffset);
     addRow(themePanel, 5, targetsLabel, themeApps, themeSystem);
 
+    hotkeyField.onRecording = onHotkeyRecording;
+    hotkeyField.onChange =
+        () -> {
+          hotkeyEnabled.setSelected(true);
+          updateTimerEnabled();
+        };
+    hotkeyEnabled.addActionListener(e -> updateTimerEnabled());
+    autoClose.addActionListener(e -> updateTimerEnabled());
+    clearHotkey.addActionListener(
+        e -> {
+          hotkeyField.setHotkey(Optional.empty());
+          hotkeyEnabled.setSelected(false);
+          updateTimerEnabled();
+        });
+
+    JPanel timerPanel = new JPanel(new GridBagLayout());
+    timerPanel.setBorder(BorderFactory.createTitledBorder("Timer window"));
+    addRow(timerPanel, 0, hotkeyEnabled, hotkeyField, clearHotkey, hotkeyStatusLabel);
+    addRow(timerPanel, 1, autoClose, autoCloseSeconds, new JLabel("seconds"));
+
+    JPanel settings = new JPanel(new BorderLayout(0, 12));
+    settings.add(themePanel, BorderLayout.NORTH);
+    settings.add(timerPanel, BorderLayout.CENTER);
+
     JPanel center = new JPanel(new BorderLayout(0, 12));
     center.add(scheduleGrid(), BorderLayout.NORTH);
-    center.add(themePanel, BorderLayout.CENTER);
+    center.add(settings, BorderLayout.CENTER);
     content.add(center, BorderLayout.CENTER);
     content.add(footer(onSave, onCheckForUpdates, version), BorderLayout.SOUTH);
     setContentPane(content);
@@ -174,6 +217,11 @@ public final class MainWindow extends JFrame {
     startMinimized.setSelected(config.startMinimized());
     autoUpdate.setSelected(config.autoUpdate());
     showTheme(config.theme());
+    showTimer(config.timer());
+  }
+
+  public void showHotkeyStatus(String description) {
+    hotkeyStatusLabel.setText(description);
   }
 
   public void showUpdateStatus(String description) {
@@ -256,6 +304,7 @@ public final class MainWindow extends JFrame {
           startMinimized.setSelected(defaults.startMinimized());
           autoUpdate.setSelected(defaults.autoUpdate());
           showTheme(defaults.theme());
+          showTimer(defaults.timer());
         });
 
     JButton save = new JButton("Save");
@@ -317,7 +366,36 @@ public final class MainWindow extends JFrame {
             simulateKeypress.isSelected(),
             startMinimized.isSelected(),
             autoUpdate.isSelected(),
-            theme));
+            theme,
+            timerFromFields()));
+  }
+
+  private void showTimer(TimerSettings timer) {
+    hotkeyField.setHotkey(timer.hotkey());
+    hotkeyEnabled.setSelected(timer.hotkeyEnabled());
+    autoClose.setSelected(timer.autoCloseSeconds() > 0);
+    if (timer.autoCloseSeconds() > 0) {
+      autoCloseSeconds.setValue(timer.autoCloseSeconds());
+    }
+    updateTimerEnabled();
+  }
+
+  private TimerSettings timerFromFields() {
+    Optional<Hotkey> hotkey = hotkeyField.hotkey;
+    return new TimerSettings(
+        hotkey,
+        hotkeyEnabled.isSelected() && hotkey.isPresent(),
+        autoClose.isSelected() ? ((Number) autoCloseSeconds.getValue()).intValue() : 0);
+  }
+
+  private void updateTimerEnabled() {
+    boolean hasHotkey = hotkeyField.hotkey.isPresent();
+    if (!hasHotkey) {
+      hotkeyEnabled.setSelected(false);
+    }
+    hotkeyEnabled.setEnabled(hasHotkey);
+    clearHotkey.setEnabled(hasHotkey);
+    autoCloseSeconds.setEnabled(autoClose.isSelected());
   }
 
   private void showTheme(ThemeSchedule theme) {
@@ -426,6 +504,61 @@ public final class MainWindow extends JFrame {
         .toLocalTime()
         .withSecond(0)
         .withNano(0);
+  }
+
+  private static final class HotkeyField extends JTextField {
+    Optional<Hotkey> hotkey = Optional.empty();
+    Consumer<Boolean> onRecording = recording -> {};
+    Runnable onChange = () -> {};
+
+    HotkeyField() {
+      super(12);
+      setEditable(false);
+      setFocusTraversalKeysEnabled(false);
+      setToolTipText("Click, then press a key combination. Esc cancels, Backspace restores the default.");
+      addFocusListener(
+          new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+              setText("Press keys…");
+              onRecording.accept(true);
+            }
+
+            @Override
+            public void focusLost(FocusEvent e) {
+              showHotkey();
+              onRecording.accept(false);
+            }
+          });
+      addKeyListener(
+          new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+              e.consume();
+              switch (e.getKeyCode()) {
+                case KeyEvent.VK_ESCAPE -> transferFocus();
+                case KeyEvent.VK_TAB -> transferFocus();
+                case KeyEvent.VK_BACK_SPACE -> record(Optional.of(Hotkey.DEFAULT));
+                default -> Hotkey.from(e).ifPresent(key -> record(Optional.of(key)));
+              }
+            }
+          });
+    }
+
+    void setHotkey(Optional<Hotkey> value) {
+      hotkey = value;
+      showHotkey();
+    }
+
+    private void record(Optional<Hotkey> value) {
+      setHotkey(value);
+      onChange.run();
+      transferFocus();
+    }
+
+    private void showHotkey() {
+      setText(hotkey.map(Hotkey::toString).orElse("Not set"));
+    }
   }
 
   private static final class DayRow {

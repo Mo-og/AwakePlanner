@@ -20,7 +20,8 @@ public record Config(
     boolean simulateKeypress,
     boolean startMinimized,
     boolean autoUpdate,
-    ThemeSchedule theme) {
+    ThemeSchedule theme,
+    TimerSettings timer) {
 
   private static final LocalTime DEFAULT_START = LocalTime.of(8, 30);
   private static final LocalTime DEFAULT_END = LocalTime.of(19, 0);
@@ -34,7 +35,8 @@ public record Config(
     for (DayOfWeek day : DayOfWeek.values()) {
       days.put(day, new DaySchedule(isWorkday(day), DEFAULT_START, DEFAULT_END));
     }
-    return new Config(days, Mode.SCHEDULE, false, true, true, ThemeSchedule.defaults());
+    return new Config(
+        days, Mode.SCHEDULE, false, true, true, ThemeSchedule.defaults(), TimerSettings.defaults());
   }
 
   public DaySchedule day(DayOfWeek day) {
@@ -42,12 +44,12 @@ public record Config(
   }
 
   public Config withMode(Mode newMode) {
-    return new Config(days, newMode, simulateKeypress, startMinimized, autoUpdate, theme);
+    return new Config(days, newMode, simulateKeypress, startMinimized, autoUpdate, theme, timer);
   }
 
   public Config withThemeMode(ThemeMode newMode) {
     return new Config(
-        days, mode, simulateKeypress, startMinimized, autoUpdate, theme.withMode(newMode));
+        days, mode, simulateKeypress, startMinimized, autoUpdate, theme.withMode(newMode), timer);
   }
 
   public static Config load(Path file) {
@@ -79,7 +81,18 @@ public record Config(
         parseBoolean(props.getProperty("simulateKeypress"), defaults.simulateKeypress()),
         parseBoolean(props.getProperty("startMinimized"), defaults.startMinimized()),
         parseBoolean(props.getProperty("autoUpdate"), defaults.autoUpdate()),
-        loadTheme(props, defaults.theme()));
+        loadTheme(props, defaults.theme()),
+        loadTimer(props, defaults.timer()));
+  }
+
+  private static TimerSettings loadTimer(Properties props, TimerSettings fallback) {
+    String hotkey = props.getProperty("timer.hotkey");
+    TimerSettings loaded =
+        new TimerSettings(
+            hotkey == null ? fallback.hotkey() : Hotkey.parse(hotkey),
+            parseBoolean(props.getProperty("timer.hotkeyEnabled"), fallback.hotkeyEnabled()),
+            parseInt(props.getProperty("timer.autoClose"), fallback.autoCloseSeconds()));
+    return loaded.isValid() ? loaded : fallback;
   }
 
   private static ThemeSchedule loadTheme(Properties props, ThemeSchedule fallback) {
@@ -119,6 +132,9 @@ public record Config(
     props.setProperty("theme.sunsetOffset", Integer.toString(theme.sunsetOffset()));
     props.setProperty("theme.apps", Boolean.toString(theme.apps()));
     props.setProperty("theme.system", Boolean.toString(theme.system()));
+    props.setProperty("timer.hotkey", timer.hotkey().map(Hotkey::toString).orElse(""));
+    props.setProperty("timer.hotkeyEnabled", Boolean.toString(timer.hotkeyEnabled()));
+    props.setProperty("timer.autoClose", Integer.toString(timer.autoCloseSeconds()));
     Files.createDirectories(file.toAbsolutePath().getParent());
     try (Writer writer = Files.newBufferedWriter(file)) {
       props.store(writer, "AwakePlanner settings");

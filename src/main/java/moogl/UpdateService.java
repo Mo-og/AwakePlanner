@@ -36,13 +36,20 @@ public final class UpdateService {
     void install(Path update, Path target) throws IOException;
   }
 
-  public record Update(String message, boolean important) {}
+  public record ManualDownload(Version version, String reason, URI releasePage) {}
+
+  public record Update(String message, boolean important, Optional<ManualDownload> manualDownload) {
+    public Update(String message, boolean important) {
+      this(message, important, Optional.empty());
+    }
+  }
 
   private static final Logger LOG = Logger.getLogger(UpdateService.class.getName());
   private static final Duration FIRST_CHECK = Duration.ofMinutes(2);
   private static final Duration TICK = Duration.ofHours(1);
   private static final Duration CHECK_INTERVAL = Duration.ofDays(1);
   private static final Duration DOWNLOAD_TIMEOUT = Duration.ofMinutes(5);
+  private static final String RUNTIME_ASSET = "AwakePlanner.runtime";
   private static final Pattern TAG_LOCATION = Pattern.compile("/releases/tag/([^/?#]+)$");
 
   private final URI releases;
@@ -52,6 +59,7 @@ public final class UpdateService {
   private final Installer installer;
   private final Runnable onInstalled;
   private final Clock clock;
+  private final RuntimeInfo runtime;
   private final HttpClient noRedirects;
   private final HttpClient followRedirects;
   private final ScheduledExecutorService executor =
@@ -73,6 +81,7 @@ public final class UpdateService {
       Installer installer,
       Runnable onInstalled,
       Clock clock,
+      RuntimeInfo runtime,
       boolean autoUpdate) {
     this.releases = releases.toString().endsWith("/") ? releases : URI.create(releases + "/");
     this.current = current;
@@ -81,6 +90,7 @@ public final class UpdateService {
     this.installer = installer;
     this.onInstalled = onInstalled;
     this.clock = clock;
+    this.runtime = runtime;
     this.autoUpdate = autoUpdate;
     Duration connectTimeout = Duration.ofSeconds(15);
     noRedirects =
@@ -140,8 +150,17 @@ public final class UpdateService {
         publish("Up to date (" + current + ")", manual);
         return;
       }
-      if (current.dev() || target.isEmpty()) {
+      if (current.dev()) {
         publish(version.tag() + " is available on GitHub", manual);
+        return;
+      }
+      if (target.isEmpty()) {
+        requireManualDownload(version, "this copy can't replace its own file", manual);
+        return;
+      }
+      Optional<String> unmet = requirement(version).flatMap(r -> r.unmetBy(runtime));
+      if (unmet.isPresent()) {
+        requireManualDownload(version, unmet.get(), manual);
         return;
       }
       install(version, target.get());
@@ -169,6 +188,52 @@ public final class UpdateService {
         .map(TAG_LOCATION::matcher)
         .filter(Matcher::find)
         .flatMap(matcher -> Version.parse(matcher.group(1)));
+  }
+
+  Optional<RuntimeRequirement> requirement(Version version)
+      throws IOException, InterruptedException {
+    URI uri = releases.resolve("download/" + version.tag() + "/" + RUNTIME_ASSET);
+    HttpResponse<String> response =
+        followRedirects.send(request(uri), HttpResponse.BodyHandlers.ofString());
+    if (response.statusCode() == 404) {
+      return Optional.empty();
+    }
+    if (response.statusCode() != 200) {
+      throw new IOException("download of " + uri + " answered HTTP " + response.statusCode());
+    }
+    return RuntimeRequirement.parse(response.body());
+  }
+
+  private void requireManualDownload(Version version, String reason, boolean manual) {
+    URI page = releases.resolve("tag/" + version.tag());
+    boolean prompt = manual || !promptedFor(version);
+    if (prompt) {
+      recordPrompt(version);
+    }
+    LOG.info(version.tag() + " needs a manual download: " + reason);
+    Update update =
+        new Update(
+            version.tag() + " needs a manual download",
+            prompt,
+            Optional.of(new ManualDownload(version, reason, page)));
+    listeners.forEach(listener -> listener.accept(update));
+  }
+
+  private boolean promptedFor(Version version) {
+    try {
+      return Files.readString(workDir.resolve("manual-notice")).trim().equals(version.tag());
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private void recordPrompt(Version version) {
+    try {
+      Files.createDirectories(workDir);
+      Files.writeString(workDir.resolve("manual-notice"), version.tag());
+    } catch (IOException e) {
+      LOG.log(Level.WARNING, "Could not record update notice", e);
+    }
   }
 
   private void install(Version version, Path file) throws IOException, InterruptedException {

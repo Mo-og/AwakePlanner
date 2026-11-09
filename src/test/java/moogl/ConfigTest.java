@@ -9,6 +9,7 @@ import java.time.DayOfWeek;
 import java.time.LocalTime;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -37,7 +38,14 @@ class ConfigTest {
   void roundTripsThroughFile() throws IOException {
     Map<DayOfWeek, DaySchedule> days = new EnumMap<>(Config.defaults().days());
     days.put(DayOfWeek.SATURDAY, new DaySchedule(true, LocalTime.of(10, 0), LocalTime.of(14, 15)));
-    Config config = new Config(days, Mode.ALWAYS_ON, true, false, false, ThemeSchedule.defaults());
+    Config config = new Config(
+            days,
+            Mode.ALWAYS_ON,
+            true,
+            false,
+            false,
+            ThemeSchedule.defaults(),
+            new TimerSettings(Optional.of(new Hotkey(Hotkey.CTRL | Hotkey.SHIFT, "T")), true, 30));
     Path file = dir.resolve("nested/config.properties");
 
     config.save(file);
@@ -81,7 +89,7 @@ class ConfigTest {
             true,
             false);
     Config defaults = Config.defaults();
-    Config config = new Config(defaults.days(), Mode.OFF, true, false, true, theme);
+    Config config = new Config(defaults.days(), Mode.OFF, true, false, true, theme, defaults.timer());
     Path file = dir.resolve("config.properties");
 
     config.save(file);
@@ -118,5 +126,48 @@ class ConfigTest {
     assertEquals(ThemeMode.OFF, theme.mode());
     assertEquals(0.0, theme.longitude());
     assertEquals(30, theme.sunsetOffset());
+  }
+
+  @Test
+  void clearedHotkeyRoundTripsThroughFile() throws IOException {
+    Config defaults = Config.defaults();
+    TimerSettings timer = new TimerSettings(Optional.empty(), false, 0);
+    Config config =
+        new Config(
+            defaults.days(), Mode.SCHEDULE, false, true, true, defaults.theme(), timer);
+    Path file = dir.resolve("config.properties");
+
+    config.save(file);
+
+    assertEquals(timer, Config.load(file).timer());
+  }
+
+  @Test
+  void disabledHotkeyKeepsItsCombination() throws IOException {
+    Path file = dir.resolve("config.properties");
+    Files.writeString(
+        file,
+        """
+        timer.hotkey=Ctrl+Alt+F12
+        timer.hotkeyEnabled=false
+        """);
+
+    TimerSettings timer = Config.load(file).timer();
+
+    assertEquals(Optional.of(Hotkey.DEFAULT), timer.hotkey());
+    assertEquals(Optional.empty(), timer.activeHotkey());
+  }
+
+  @Test
+  void invalidTimerSettingsFallBackToDefaults() throws IOException {
+    Path file = dir.resolve("config.properties");
+    Files.writeString(
+        file,
+        """
+        timer.hotkey=Ctrl+Space
+        timer.autoClose=2
+        """);
+
+    assertEquals(TimerSettings.defaults(), Config.load(file).timer());
   }
 }

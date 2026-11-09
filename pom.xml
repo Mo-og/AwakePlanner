@@ -14,6 +14,9 @@
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.11.4</junit.version>
+        <runtime.java>${maven.compiler.release}</runtime.java>
+        <full.icon>${project.basedir}/src/main/resources/icon.ico</full.icon>
+        <runtime.modules>java.base,java.desktop,java.logging,java.net.http</runtime.modules>
     </properties>
 
     <dependencies>
@@ -54,6 +57,29 @@
                         <goals>
                             <goal>parse-version</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>runtime-requirement</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/dist</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -122,5 +148,73 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>full</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>full-package</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <property name="full.work" value="${project.build.directory}/full"/>
+                                        <delete dir="${full.work}"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${full.work}/input"/>
+                                        <exec executable="${java.home}/bin/jlink" failonerror="true">
+                                            <arg value="--add-modules"/>
+                                            <arg value="${runtime.modules}"/>
+                                            <arg value="--strip-debug"/>
+                                            <arg value="--no-header-files"/>
+                                            <arg value="--no-man-pages"/>
+                                            <arg value="--compress=zip-9"/>
+                                            <arg value="--output"/>
+                                            <arg value="${full.work}/runtime"/>
+                                        </exec>
+                                        <exec executable="${java.home}/bin/jpackage" failonerror="true">
+                                            <arg value="--type"/>
+                                            <arg value="app-image"/>
+                                            <arg value="--name"/>
+                                            <arg value="AwakePlanner"/>
+                                            <arg value="--input"/>
+                                            <arg value="${full.work}/input"/>
+                                            <arg value="--main-jar"/>
+                                            <arg value="${project.build.finalName}.jar"/>
+                                            <arg value="--main-class"/>
+                                            <arg value="moogl.Main"/>
+                                            <arg value="--runtime-image"/>
+                                            <arg value="${full.work}/runtime"/>
+                                            <arg value="--java-options"/>
+                                            <arg value="--enable-native-access=ALL-UNNAMED"/>
+                                            <arg value="--icon"/>
+                                            <arg value="${full.icon}"/>
+                                            <arg value="--app-version"/>
+                                            <arg value="${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.incrementalVersion}"/>
+                                            <arg value="--description"/>
+                                            <arg value="AwakePlanner"/>
+                                            <arg value="--dest"/>
+                                            <arg value="${full.work}/image"/>
+                                        </exec>
+                                        <zip destfile="${project.build.directory}/${project.build.finalName}-full.zip"
+                                             basedir="${full.work}/image"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>
