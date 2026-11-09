@@ -48,6 +48,7 @@ final class NotchWindow extends JWindow {
   private static final int PADDING = 20;
   private static final double OPEN_MS = 460;
   private static final double CLOSE_MS = 280;
+  static final int LEAVE_CLOSE_MS = 2000;
   private static final Color TRANSPARENT = new Color(0, 0, 0, 0);
   private static final String FONT = "Segoe UI";
 
@@ -115,6 +116,7 @@ final class NotchWindow extends JWindow {
   private Control hovered;
   private Control pressed;
   private boolean pointerInside;
+  private boolean wasHovered;
 
   NotchWindow(
       Supplier<Status> status,
@@ -201,6 +203,7 @@ final class NotchWindow extends JWindow {
     if (phase == Phase.HIDDEN) {
       position();
       t = 0;
+      wasHovered = false;
       setVisible(true);
     }
     startPhase(Phase.OPENING);
@@ -256,10 +259,24 @@ final class NotchWindow extends JWindow {
 
   private void restartAutoClose() {
     autoClose.stop();
-    if (autoCloseSeconds > 0 && !pointerInside && phase != Phase.CLOSING && phase != Phase.HIDDEN) {
-      autoClose.setInitialDelay(autoCloseSeconds * 1000);
+    if (phase == Phase.CLOSING || phase == Phase.HIDDEN) {
+      return;
+    }
+    int delay = closeDelayMs(wasHovered, pointerInside, autoCloseSeconds);
+    if (delay > 0) {
+      autoClose.setInitialDelay(delay);
       autoClose.start();
     }
+  }
+
+  static int closeDelayMs(boolean wasHovered, boolean pointerInside, int autoCloseSeconds) {
+    if (pointerInside) {
+      return 0;
+    }
+    if (wasHovered) {
+      return LEAVE_CLOSE_MS;
+    }
+    return autoCloseSeconds * 1000;
   }
 
   private void position() {
@@ -403,6 +420,7 @@ final class NotchWindow extends JWindow {
             @Override
             public void mouseEntered(MouseEvent e) {
               pointerInside = true;
+              wasHovered = true;
               autoClose.stop();
             }
 

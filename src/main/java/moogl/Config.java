@@ -52,6 +52,11 @@ public record Config(
         days, mode, simulateKeypress, startMinimized, autoUpdate, theme.withMode(newMode), timer);
   }
 
+  public Config withTimer(TimerSettings newTimer) {
+    return new Config(
+        days, mode, simulateKeypress, startMinimized, autoUpdate, theme, newTimer);
+  }
+
   public static Config load(Path file) {
     Config defaults = defaults();
     if (!Files.isRegularFile(file)) {

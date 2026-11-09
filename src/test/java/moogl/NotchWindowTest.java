@@ -14,4 +14,13 @@ class NotchWindowTest {
     assertEquals("00:00:00", NotchWindow.formatRemaining(Duration.ofSeconds(-5)));
     assertEquals("2d 01:00:00", NotchWindow.formatRemaining(Duration.ofHours(49)));
   }
+
+  @Test
+  void closesSoonAfterPointerLeavesOnceHovered() {
+    assertEquals(15_000, NotchWindow.closeDelayMs(false, false, 15));
+    assertEquals(0, NotchWindow.closeDelayMs(false, false, 0));
+    assertEquals(0, NotchWindow.closeDelayMs(true, true, 15));
+    assertEquals(NotchWindow.LEAVE_CLOSE_MS, NotchWindow.closeDelayMs(true, false, 15));
+    assertEquals(NotchWindow.LEAVE_CLOSE_MS, NotchWindow.closeDelayMs(true, false, 0));
+  }
 }

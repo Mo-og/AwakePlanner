@@ -170,4 +170,16 @@ class ConfigTest {
 
     assertEquals(TimerSettings.defaults(), Config.load(file).timer());
   }
+
+  @Test
+  void withTimerKeepsOtherSettings() {
+    Config config = Config.defaults().withMode(Mode.OFF);
+    TimerSettings timer = new TimerSettings(Optional.empty(), false, 30);
+
+    Config changed = config.withTimer(timer);
+
+    assertEquals(timer, changed.timer());
+    assertEquals(Mode.OFF, changed.mode());
+    assertEquals(config.theme(), changed.theme());
+  }
 }

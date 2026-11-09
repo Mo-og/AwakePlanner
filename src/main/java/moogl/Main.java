@@ -22,7 +22,6 @@ import javax.swing.JEditorPane;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
-import javax.swing.UnsupportedLookAndFeelException;
 import javax.swing.event.HyperlinkEvent;
 
 public final class Main {
@@ -45,6 +44,7 @@ public final class Main {
   private NotchWindow notch;
   private GlobalHotkeys hotkeys;
   private boolean recordingHotkey;
+  private AppTheme appTheme;
 
   private Main(Config config) {
     this.config = config;
@@ -74,11 +74,8 @@ public final class Main {
   }
 
   private void start(boolean forceShow) {
-    try {
-      UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-    } catch (ReflectiveOperationException | UnsupportedLookAndFeelException e) {
-      LOG.log(Level.FINE, "System look and feel unavailable", e);
-    }
+    appTheme = new AppTheme(themeControl::current, () -> window.pack());
+    appTheme.install();
 
     boolean trayAvailable = SystemTray.isSupported();
     window =
@@ -89,6 +86,7 @@ public final class Main {
             build.version(),
             trayAvailable,
             this::suspendHotkey,
+            timer -> applyConfig(config.withTimer(timer)),
             this::exit);
     window.showConfig(config);
 
@@ -287,6 +285,7 @@ public final class Main {
     themeService.shutdown();
     updates.shutdown();
     hotkeys.shutdown();
+    appTheme.stop();
     notch.dispose();
     if (tray != null) {
       tray.remove();

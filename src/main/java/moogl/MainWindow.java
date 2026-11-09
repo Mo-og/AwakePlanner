@@ -6,6 +6,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Image;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.Insets;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
@@ -83,6 +84,8 @@ public final class MainWindow extends JFrame {
   private final List<Component> sunControls;
   private final List<Component> themeTargetControls;
   private boolean updatingMode;
+  private boolean updatingTimer;
+  private Consumer<TimerSettings> onTimerChanged = timer -> {};
   private boolean syncingLocation;
 
   public MainWindow(
@@ -92,6 +95,7 @@ public final class MainWindow extends JFrame {
       Version version,
       boolean hideToTray,
       Consumer<Boolean> onHotkeyRecording,
+      Consumer<TimerSettings> onTimerChanged,
       Runnable onExit) {
     super("AwakePlanner");
     setIconImages(
@@ -146,25 +150,37 @@ public final class MainWindow extends JFrame {
         themePanel, 4, sunriseOffsetLabel, sunriseOffset, sunsetOffsetLabel, sunsetOffset);
     addRow(themePanel, 5, targetsLabel, themeApps, themeSystem);
 
+    this.onTimerChanged = onTimerChanged;
     hotkeyField.onRecording = onHotkeyRecording;
     hotkeyField.onChange =
         () -> {
           hotkeyEnabled.setSelected(true);
-          updateTimerEnabled();
+          timerEdited();
         };
-    hotkeyEnabled.addActionListener(e -> updateTimerEnabled());
-    autoClose.addActionListener(e -> updateTimerEnabled());
+    hotkeyEnabled.addActionListener(e -> timerEdited());
+    autoClose.addActionListener(e -> timerEdited());
+    autoCloseSeconds.addChangeListener(e -> timerEdited());
     clearHotkey.addActionListener(
         e -> {
           hotkeyField.setHotkey(Optional.empty());
           hotkeyEnabled.setSelected(false);
-          updateTimerEnabled();
+          timerEdited();
         });
 
     JPanel timerPanel = new JPanel(new GridBagLayout());
     timerPanel.setBorder(BorderFactory.createTitledBorder("Timer window"));
-    addRow(timerPanel, 0, hotkeyEnabled, hotkeyField, clearHotkey, hotkeyStatusLabel);
-    addRow(timerPanel, 1, autoClose, autoCloseSeconds, new JLabel("seconds"));
+    addRow(timerPanel, 0, hotkeyEnabled, hotkeyField, clearHotkey);
+    GridBagConstraints statusCell = new GridBagConstraints();
+    statusCell.insets = new Insets(0, 6, 4, 6);
+    statusCell.anchor = GridBagConstraints.WEST;
+    statusCell.gridx = 1;
+    statusCell.gridy = 1;
+    statusCell.gridwidth = GridBagConstraints.REMAINDER;
+    timerPanel.add(hotkeyStatusLabel, statusCell);
+    JPanel autoCloseDelay = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    autoCloseDelay.add(autoCloseSeconds);
+    autoCloseDelay.add(new JLabel("seconds"));
+    addRow(timerPanel, 2, autoClose, autoCloseDelay);
 
     JPanel settings = new JPanel(new BorderLayout(0, 12));
     settings.add(themePanel, BorderLayout.NORTH);
@@ -222,10 +238,19 @@ public final class MainWindow extends JFrame {
 
   public void showHotkeyStatus(String description) {
     hotkeyStatusLabel.setText(description);
+    refit();
   }
 
   public void showUpdateStatus(String description) {
     updateStatusLabel.setText(description);
+    refit();
+  }
+
+  public void refit() {
+    Dimension preferred = getPreferredSize();
+    if (preferred.width > getWidth() || preferred.height > getHeight()) {
+      pack();
+    }
   }
 
   public void showThemeMode(ThemeMode mode) {
@@ -371,13 +396,25 @@ public final class MainWindow extends JFrame {
   }
 
   private void showTimer(TimerSettings timer) {
-    hotkeyField.setHotkey(timer.hotkey());
-    hotkeyEnabled.setSelected(timer.hotkeyEnabled());
-    autoClose.setSelected(timer.autoCloseSeconds() > 0);
-    if (timer.autoCloseSeconds() > 0) {
-      autoCloseSeconds.setValue(timer.autoCloseSeconds());
+    updatingTimer = true;
+    try {
+      hotkeyField.setHotkey(timer.hotkey());
+      hotkeyEnabled.setSelected(timer.hotkeyEnabled());
+      autoClose.setSelected(timer.autoCloseSeconds() > 0);
+      if (timer.autoCloseSeconds() > 0) {
+        autoCloseSeconds.setValue(timer.autoCloseSeconds());
+      }
+      updateTimerEnabled();
+    } finally {
+      updatingTimer = false;
     }
+  }
+
+  private void timerEdited() {
     updateTimerEnabled();
+    if (!updatingTimer) {
+      onTimerChanged.accept(timerFromFields());
+    }
   }
 
   private TimerSettings timerFromFields() {
@@ -468,6 +505,8 @@ public final class MainWindow extends JFrame {
     c.gridy = row;
     for (int column = 0; column < cells.length; column++) {
       c.gridx = column;
+      c.fill =
+          cells[column] instanceof JTextField ? GridBagConstraints.HORIZONTAL : GridBagConstraints.NONE;
       c.gridwidth = column == cells.length - 1 ? GridBagConstraints.REMAINDER : 1;
       panel.add(cells[column], c);
     }
@@ -512,7 +551,7 @@ public final class MainWindow extends JFrame {
     Runnable onChange = () -> {};
 
     HotkeyField() {
-      super(12);
+      super(16);
       setEditable(false);
       setFocusTraversalKeysEnabled(false);
       setToolTipText("Click, then press a key combination. Esc cancels, Backspace restores the default.");
